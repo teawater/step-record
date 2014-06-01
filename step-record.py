@@ -16,18 +16,22 @@ class Lang(object):
                  '覆盖“%s”？')
         self.add("Which step command do you want to use?",
                  "你要使用哪个单步命令？")
-        self.add("Please input the number of breakpoint that will stop the record(0 means every breakpoint):[0]",
-                 "请输入停止记录的断点号（0代表所有断点）:[0]")
+        self.add("Please input the number of breakpoint that will stop the record(empty means record will stop by any breakpoint):",
+                 "请输入停止记录的断点号（空代表任何断点）:")
         self.add("Record the duplicate log?",
                  "记录重复的日志？")
         self.add("Record the function name?",
                  "记录函数名？")
+        self.add("Record the function arguments?",
+                 "记录函数参数？")
         self.add("Record the file name?",
                  "记录文件名？")
         self.add("Record the number of line?",
                  "记录文件行？")
         self.add('Saved log to "%s".',
                  '记录保存到“%s”。')
+        self.add("Record will not stop until inferior exit because doesn't set any breakpoint.  Continue?",
+                 "因为没有任何断点，所以记录将在被调试程序退出时才停止。是否继续？")
 
     def set_language(self, language):
         if language != "":
@@ -42,7 +46,7 @@ class Lang(object):
 
     def string(self, s):
         if self.language == "en" or (not self.data.has_key(s)):
-            print self.language
+            return s
         return self.data[s]
 
 def select_from_list(entry_list, default_entry, introduction):
@@ -115,21 +119,32 @@ while True:
 step_cmd = select_from_list(("step", "stepi", "next", "nexti"), "step", lang.string("Which step command do you want to use?"))
 
 #Get break_num
-while True:
-    break_num = raw_input(lang.string("Please input the number of breakpoint that will stop the record(0 means every breakpoint):[0]"))
-    try:
-        s = gdb.execute("info breakpoints " + break_num, True, True)
-    except:
-        continue
-    if s[:13] != "No breakpoint":
-        break
-break_num = "Breakpoint " + break_num
+s = str(gdb.execute("info breakpoints", True, True)).strip()
+if s[:13] == "No breakpoint":
+    if not yes_no(lang.string("Record will not stop until inferior exit because doesn't set any breakpoint.  Continue?")):
+        raise Exception("Doesn't have any breakpoint to stop record.")
+    no_breakpoint = True
+else:
+    no_breakpoint = False
+    while True:
+        break_num = raw_input(lang.string("Please input the number of breakpoint that will stop the record(empty means record will stop by any breakpoint):"))
+        if len(break_num) != 0:
+            try:
+                s = gdb.execute("info breakpoints " + break_num, True, True)
+            except:
+                continue
+            if s[:13] != "No breakpoint":
+                break
+    break_num = "Breakpoint " + break_num
 
 #Get record_duplicate
 record_duplicate = yes_no(lang.string("Record the duplicate log?"), True, False)
 
 #Get record_function
 record_function = yes_no(lang.string("Record the function name?"), True, True)
+
+#Get record_arg
+record_arg = yes_no(lang.string("Record the function arguments?"), True, True)
 
 #Get record_file
 record_file = yes_no(lang.string("Record the file name?"), True, True)
@@ -141,15 +156,31 @@ prev_line = ""
 while True:
     try:
         s = gdb.execute(step_cmd, True, True)
-        s = s.lstrip()
+        if not no_breakpoint:
+            s = s.lstrip()
 
         l = gdb.execute("info line", True, True)
-        l = re.match(r'Line (\d+) of "(.*)".*<([^+]*).*>', l)
+        l = re.match(r'Line (\d+) of "(.*)" (starts|is) at address [0-9xa-f]* <([^+]*).*>', l)
         if not bool(l):
             break
         line = ""
         if record_function:
-            line += l.group(3)
+            line += l.group(4)
+        if record_arg:
+            #get arguments
+            args = gdb.execute("info args", True, True).strip()
+            if (args == "No symbol table info available."
+                or args == "No arguments."):
+                args = ""
+            line += "("
+            for e in args.split("\n"):
+                e = e.strip()
+                if e != "":
+                    line += e + ","
+            #Remove last ","
+            if line[-1:] == ",":
+                line = line[:-1]
+            line += ")"
         if record_file:
             if len(line) > 0:
                 line += " "
@@ -163,7 +194,9 @@ while True:
             record_fp.write(line)
             prev_line = line
 
-        if len(s) >= len(break_num) and s[:len(break_num)] == break_num:
+        if (not no_breakpoint
+            and len(s) >= len(break_num)
+            and s[:len(break_num)] == break_num):
             break
     except Exception, x:
         print x
