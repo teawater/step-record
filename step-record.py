@@ -135,6 +135,8 @@ else:
                 continue
             if s[:13] != "No breakpoint":
                 break
+        else:
+            break
     break_num = "Breakpoint " + break_num
 
 #Get record_duplicate
